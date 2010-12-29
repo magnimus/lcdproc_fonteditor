@@ -1,0 +1,12 @@
+* Idea
+This project is pretty simple font editor to change/update font files for lcdproc patch from Sergey Umpelev. 
+See http://lists.omnipotent.net/pipermail/lcdproc/2010-January/013246.html for details.
+
+* status
+ - can store font as C/C++ strings array into stdout (first function call in main())
+ - can generate font cp1251 from static string (secong function call in main())
+
+* Plans
+ - make it more flexible
+ - add 'create new font' feature
+ - port to other platform
