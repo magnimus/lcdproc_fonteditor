@@ -1,0 +1,239 @@
+diff -urN lcdproc-0.5.3-orig/LCDd.conf lcdproc-0.5.3/LCDd.conf
+--- lcdproc-0.5.3-orig/LCDd.conf	2009-06-20 19:48:34.000000000 +0600
++++ lcdproc-0.5.3/LCDd.conf	2010-01-20 15:31:06.000000000 +0500
+@@ -579,7 +579,9 @@
+ # 1=their complement spinning; default: 0]
+ #DiscMode=0
+ 
+-
++# Load the bitmap font to use from a specified file [default: no file specified,
++# thus using builtin iso-8859-15 font]
++#Font=/usr/share/lcdproc/fonts/iso8859_15.fnt
+ 
+ ## IrMan driver ##
+ [IrMan]
+diff -urN lcdproc-0.5.3-orig/server/drivers/imonlcd.c lcdproc-0.5.3/server/drivers/imonlcd.c
+--- lcdproc-0.5.3-orig/server/drivers/imonlcd.c	2009-06-20 19:48:34.000000000 +0600
++++ lcdproc-0.5.3/server/drivers/imonlcd.c	2010-01-20 15:20:11.000000000 +0500
+@@ -21,6 +21,11 @@
+  *  Improved send_command_data()
+  *  Reduced functions for basic character drawing - removed draw_char() and draw_string()
+  *
++ * Modified January 2010 by Sergey Umpelev <umpelev (at) gmail (dot) com>
++ * to enable loadable font support in the imonlcd driver
++ *  Added Font configuration parameter
++ *  Modified imonlcd_get_info() to show the encoding of a loaded font
++ *
+  * Copyright (c) 2004, Venky Raju <dev (at) venky (dot) ws>
+  *               2007, Dean Harding <dean (at) codeka dotcom>
+  *               2007, Christian Leuschen <christian (dot) leuschen (at) gmx (dot) de>
+@@ -70,6 +75,8 @@
+ #define DEFAULT_ON_EXIT      1	/**< show the big clock */
+ #define DEFAULT_PROTOCOL     0	/**< protocol for 15c2:ffdc device */
+ 
++#define DEFAULT_FONT         ""
++#define DEFAULT_FONT_ENCODING         "iso-8859-15"
+ 
+ #define ON_EXIT_SHOWMSG      0	/**< Do nothing - just leave the "shutdown"
+ 				 * message there */
+@@ -87,7 +94,8 @@
+ 
+ /** Private data for the \c imonlcd driver */
+ typedef struct imonlcd_private_data {
+-	char info[255];
++#define INFO_MAXLEN 255
++	char info[INFO_MAXLEN];
+ 	int imon_fd;
+ 
+ 	/* send buffer for one command or display data */
+@@ -134,6 +142,11 @@
+ 	/* remind the last state for setting the icons */
+ 	uint64_t last_icon_state;
+ 	int lastPrivateIconState;
++	
++	/* font data */
++	imon_font *font;
++	/* font encoding */
++	char *font_encoding;
+ } PrivateData;
+ 
+ /*
+@@ -261,6 +274,21 @@
+ static void send_command_data(uint64_t commandData, PrivateData *p);
+ static void send_packet(PrivateData *p);
+ 
++char* fgetsz(char* buf, int maxsize, FILE* file)
++{
++	int ch;
++	int read_count;
++
++	read_count=0;
++	do
++	{
++		ch = fgetc (file);
++		if (ch != EOF) buf[read_count++]=(char)ch;
++	} while (ch != EOF && ch != 0 && read_count < maxsize);
++	if (ch == EOF) return NULL;
++	return buf;
++}
++
+ /**
+  * Initialize the driver.
+  * \param drvthis  Pointer to driver structure.
+@@ -274,6 +302,7 @@
+ 	char buf[256];
+ 	int graph_width, graph_height;	/* width and height of screen, in pixels */
+ 	int tmp;
++	char buf1[256];
+ 
+ 	/* Allocate, initialize and store private p */
+ 	p = (PrivateData *) calloc(1, sizeof(PrivateData));
+@@ -388,7 +417,78 @@
+ 
+ 	/* Get the "disc-mode" setting */
+ 	p->discMode = drvthis->config_get_bool(drvthis->name, "DiscMode", 0, DEFAULT_DISCMODE);
++	
++	/* Default font settings */
++	p->font=default_font;
++	p->font_encoding=DEFAULT_FONT_ENCODING;
+ 
++	/* Get font */
++	strncpy(buf, drvthis->config_get_string(drvthis->name, "Font", 0, DEFAULT_FONT), sizeof(buf));
++	buf[sizeof(buf) - 1] = '\0';
++	if(*buf=='\0')
++	{
++	    report(RPT_INFO, "%s: using default iso-8859-15 font", drvthis->name);
++	}
++	else
++	{
++	    /*Try to load font*/
++	    FILE* font_file=fopen(buf,"r");
++	    if(font_file  == NULL)
++	    {
++		report(RPT_ERR, "%s: unable to open font file \"%s\", using default iso-8859-15 font", drvthis->name, buf);
++	    }
++	    else
++	    {
++		if (fgetsz(buf1,sizeof(buf1),font_file)  != NULL)
++		{
++			buf1[sizeof(buf1) - 1] = '\0';
++			if (strcmp(buf1,"imonlcd") == 0)
++			{
++				p->font_encoding = (char *)malloc(256);
++				if (p->font_encoding == NULL)
++				{
++					report(RPT_ERR, "%s: unable to allocate memory to store font encoding", drvthis->name);
++					return -1;
++				}
++				if(fgetsz(p->font_encoding,256,font_file)  != NULL)
++				{
++					p->font_encoding[255] = '\0';
++				}
++				else		
++				{
++					report(RPT_ERR, "%s: unable to read font encoding from file", drvthis->name);
++					free(p->font_encoding);
++					p->font_encoding=DEFAULT_FONT_ENCODING;
++					return -1;
++				}
++				p->font=(imon_font *) calloc(256, sizeof(imon_font));
++				if (p->font == NULL)
++				{
++					report(RPT_ERR, "%s: unable to allocate memory to store font data", drvthis->name);
++					return -1;
++				}
++				if(fread(p->font,sizeof(imon_font),256,font_file)  != 256)
++				{
++					report(RPT_ERR, "%s: unable to read font data from file", drvthis->name);
++					free(p->font);
++					p->font=default_font;
++					return -1;
++				}				
++			}
++			else
++			{
++				report(RPT_ERR, "%s: \"%s\" isn't a font file, using default iso-8859-15 font", drvthis->name, buf);
++			}
++		}
++		else
++		{
++			report(RPT_ERR, "%s: unable to read font file \"%s\", using default iso-8859-15 font", drvthis->name, buf);
++		}
++		report(RPT_INFO, "%s: using font file \"%s\", encoding is \"%s\"", drvthis->name, buf, p->font_encoding);
++		fclose(font_file);
++	    }
++	}
++	
+ 	/*
+ 	 * We need a little bit of extra memory in the frame buffer so that
+ 	 * all of the last 7-bit-long packet data will be within the frame
+@@ -515,6 +615,14 @@
+ 			free(p->framebuf);
+ 		p->framebuf = NULL;
+ 
++		if (p->font != default_font)
++		{
++			free(p->font);
++			free(p->font_encoding);
++			p->font=default_font;
++			p->font_encoding=DEFAULT_FONT_ENCODING;
++		}
++
+ 		free(p);
+ 	}
+ 	drvthis->store_private_ptr(drvthis, NULL);
+@@ -531,7 +639,7 @@
+ {
+ 	PrivateData *p = drvthis->private_data;
+ 
+-	strcpy(p->info, "SoundGraph iMON LCD driver v0.6 : 15c2:ffdc and 15c2:0038 ");
++	snprintf(p->info,INFO_MAXLEN,"SoundGraph iMON LCD driver v0.6 : 15c2:ffdc and 15c2:0038 Charset: %s",p->font_encoding);
+ 	return p->info;
+ }
+ 
+@@ -626,7 +734,7 @@
+ 	x *= p->cellwidth;
+ 	y *= p->bytesperline;
+ 
+-	defn = &font[(unsigned char) ch];
++	defn = &(p->font[(unsigned char) ch]);
+ 
+ 	/* Copy character from font into frame buffer */
+ 	for (col = 0; col < p->cellwidth; col++) {
+diff -urN lcdproc-0.5.3-orig/server/drivers/imonlcd_font.h lcdproc-0.5.3/server/drivers/imonlcd_font.h
+--- lcdproc-0.5.3-orig/server/drivers/imonlcd_font.h	2009-05-19 12:44:57.000000000 +0600
++++ lcdproc-0.5.3/server/drivers/imonlcd_font.h	2010-01-20 15:08:12.000000000 +0500
+@@ -10,13 +10,15 @@
+  * Created March 2009 by Jonathan Kyler for inclusion in lcdproc
+  * Structure based on codeka's imonlcd patch by Dean Harding
+  * Font based on Toshiba T6963 based LCD display driver font by Manuel Stahl
++ * Modified January 2010 by Sergey Umpelev <umpelev (at) gmail (dot) com>
++ * to enable loadable font support in the imonlcd driver
+  *
+  * Copyright (c) 2009, Jonathan Kyler <jkyler (at) users (dot) sourceforge (dot) net>
+  *
+  * This file is released under the GNU General Public License. Refer to the
+  * COPYING file distributed with this package.
+  */
+-
++ 
+ #ifndef IMONLCD_EXTENDED_CHARACTERS
+ #define IMONLCD_EXTENDED_CHARACTERS
+ 
+@@ -73,7 +75,7 @@
+  *  Character 160 is currently blank
+  *  Characters 161-255 match ISO_8859-15 characters
+  */
+-static imon_font font[] = {
++static imon_font default_font[] = {
+ 	{ {0x00, 0x00, 0x00, 0x00, 0x00, 0x00 } }, //   0 \u0020 space
+ 	{ {0x00, 0x7c, 0xa2, 0x8a, 0xa2, 0x7c } }, //   1 \u263a light smiley face
+ 	{ {0x00, 0x7c, 0xd6, 0xf6, 0xd6, 0x7c } }, //   2 \u263b dark smiley face
+@@ -331,6 +333,7 @@
+ 	{ {0x00, 0xff, 0x12, 0x12, 0x12, 0x0c } }, // 254 \u00fe þ thorn
+ 	{ {0x00, 0x39, 0x85, 0x06, 0xbc, 0x00 } }  // 255 \u00ff ÿ y diaeresis
+ };
++
+ #endif
+ 
+ #ifdef IMONLCD_FONT_DESC
