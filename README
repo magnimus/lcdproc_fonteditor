@@ -1,4 +1,4 @@
-* Idea
+* idea
 This project is pretty simple font editor to change/update font files for lcdproc patch from Sergey Umpelev. 
 See http://lists.omnipotent.net/pipermail/lcdproc/2010-January/013246.html for details.
 
@@ -6,7 +6,12 @@ See http://lists.omnipotent.net/pipermail/lcdproc/2010-January/013246.html for d
  - can store font as C/C++ strings array into stdout (first function call in main())
  - can generate font cp1251 from static string (secong function call in main())
 
-* Plans
+* plans
  - make it more flexible
  - add 'create new font' feature
  - port to other platform
+ 
+* outside files stored
+ - patch/lcdproc-0.5.3-imonlcd_loadable_font_support.diff - original from Sergey Umpelev
+ - fonts/cp1251.fnt - modified by magnimus
+ - fonts/iso8859_15.fnt - original from Sergey Umpelev
