@@ -10,6 +10,7 @@ See http://lists.omnipotent.net/pipermail/lcdproc/2010-January/013246.html for d
  - make it more flexible
  - add 'create new font' feature
  - port to other platform
+ - minor: add GUI
  
 * outside files stored
  - patch/lcdproc-0.5.3-imonlcd_loadable_font_support.diff - original from Sergey Umpelev
